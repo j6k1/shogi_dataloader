@@ -4,8 +4,8 @@ use std::fmt::{Debug, Display};
 use std::fs::{DirEntry, File};
 use std::io::{BufReader, Read};
 use std::path::{PathBuf};
-use std::sync::{Arc, LockResult, mpsc, RwLock, RwLockReadGuard};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, mpsc};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvError};
 use rand::prelude::SliceRandom;
 
@@ -21,8 +21,8 @@ pub struct DataLoaderBuilder {
     shuffle:bool,
     search_dir:PathBuf,
     ext:String,
-    current_filename:Option<String>,
-    current_items:usize,
+    start_filename:Option<String>,
+    processed_items:usize,
     resume:bool
 }
 impl DataLoaderBuilder {
@@ -34,8 +34,8 @@ impl DataLoaderBuilder {
             shuffle:false,
             search_dir:search_dir,
             ext:String::from("hcpe"),
-            current_filename:None,
-            current_items:0,
+            start_filename:None,
+            processed_items:0,
             resume:false
         }
     }
@@ -48,8 +48,8 @@ impl DataLoaderBuilder {
             shuffle:self.shuffle,
             search_dir:self.search_dir,
             ext:self.ext,
-            current_filename:self.current_filename,
-            current_items:self.current_items,
+            start_filename:self.start_filename,
+            processed_items:self.processed_items,
             resume:self.resume
         }
     }
@@ -62,8 +62,8 @@ impl DataLoaderBuilder {
             shuffle:self.shuffle,
             search_dir:self.search_dir,
             ext:self.ext,
-            current_filename:self.current_filename,
-            current_items:self.current_items,
+            start_filename:self.start_filename,
+            processed_items:self.processed_items,
             resume:self.resume
         }
     }
@@ -76,8 +76,8 @@ impl DataLoaderBuilder {
             shuffle:self.shuffle,
             search_dir:self.search_dir,
             ext:self.ext,
-            current_filename:self.current_filename,
-            current_items:self.current_items,
+            start_filename:self.start_filename,
+            processed_items:self.processed_items,
             resume:self.resume
         }
     }
@@ -90,8 +90,8 @@ impl DataLoaderBuilder {
             shuffle:shuffle,
             search_dir:self.search_dir,
             ext:self.ext,
-            current_filename:self.current_filename,
-            current_items:self.current_items,
+            start_filename:self.start_filename,
+            processed_items:self.processed_items,
             resume:self.resume
         }
     }
@@ -104,8 +104,8 @@ impl DataLoaderBuilder {
             shuffle:self.shuffle,
             search_dir:search_dir,
             ext:self.ext,
-            current_filename:self.current_filename,
-            current_items:self.current_items,
+            start_filename:self.start_filename,
+            processed_items:self.processed_items,
             resume:self.resume
         }
     }
@@ -118,13 +118,13 @@ impl DataLoaderBuilder {
             shuffle:self.shuffle,
             search_dir:self.search_dir,
             ext:ext,
-            current_filename:self.current_filename,
-            current_items:self.current_items,
+            start_filename:self.start_filename,
+            processed_items:self.processed_items,
             resume:self.resume
         }
     }
 
-    pub fn current_filename(self,current_filename:Option<String>) -> DataLoaderBuilder {
+    pub fn start_filename(self, current_filename:Option<String>) -> DataLoaderBuilder {
         DataLoaderBuilder {
             sfen_size:self.sfen_size,
             batch_size:self.batch_size,
@@ -132,13 +132,13 @@ impl DataLoaderBuilder {
             shuffle:self.shuffle,
             search_dir:self.search_dir,
             ext:self.ext,
-            current_filename:current_filename,
-            current_items:self.current_items,
+            start_filename:current_filename,
+            processed_items:self.processed_items,
             resume:self.resume
         }
     }
 
-    pub fn current_items(self,current_items:usize) -> DataLoaderBuilder {
+    pub fn processed_items(self, current_items:usize) -> DataLoaderBuilder {
         DataLoaderBuilder {
             sfen_size:self.sfen_size,
             batch_size:self.batch_size,
@@ -146,8 +146,8 @@ impl DataLoaderBuilder {
             shuffle:self.shuffle,
             search_dir:self.search_dir,
             ext:self.ext,
-            current_filename:self.current_filename,
-            current_items:current_items,
+            start_filename:self.start_filename,
+            processed_items:current_items,
             resume:self.resume
         }
     }
@@ -160,8 +160,8 @@ impl DataLoaderBuilder {
             shuffle:self.shuffle,
             search_dir:self.search_dir,
             ext:self.ext,
-            current_filename:self.current_filename,
-            current_items:self.current_items,
+            start_filename:self.start_filename,
+            processed_items:self.processed_items,
             resume:resume
         }
     }
@@ -178,8 +178,8 @@ impl DataLoaderBuilder {
             self.ext,
             self.shuffle,
             self.search_dir,
-            self.current_filename,
-            self.current_items,
+            self.start_filename,
+            self.processed_items,
             self.resume
         )
     }
@@ -188,9 +188,7 @@ pub struct UnifiedDataLoader<O,E>
     where O: Send + 'static,
           E: Error + Debug + Display + From<DataLoadError> + Send + 'static {
     working:Arc<AtomicBool>,
-    receiver: Receiver<Result<Option<O>,E>>,
-    current_filename:Arc<RwLock<Option<String>>>,
-    current_items:Arc<AtomicUsize>
+    receiver: Receiver<Result<Option<(String,usize,O)>,E>>,
 }
 impl<O,E> UnifiedDataLoader<O,E>
     where O: Send + 'static,
@@ -202,21 +200,18 @@ impl<O,E> UnifiedDataLoader<O,E>
               ext:String,
               shuffle:bool,
               search_dir:PathBuf,
-              current_filename:Option<String>,
-              current_items:usize,
+              start_filename:Option<String>,
+              processed_items:usize,
               resume:bool) -> Result<UnifiedDataLoader<O,E>,DataLoadError>
     where F: FnMut(Vec<Vec<u8>>) -> Result<Option<O>,E> + Send + 'static {
         let (sender,r) = mpsc::channel();
 
         let working = Arc::new(AtomicBool::new(true));
 
-        let current_filename = Arc::new(RwLock::new(current_filename));
-        let current_items = Arc::new(AtomicUsize::new(current_items));
+        let mut current_filename = start_filename.clone().unwrap_or(String::from(""));
+        let mut current_items = processed_items;
 
         {
-            let current_filename = Arc::clone(&current_filename);
-            let current_items = Arc::clone(&current_items);
-
             let working = Arc::clone(&working);
 
             let s = sender.clone();
@@ -247,17 +242,15 @@ impl<O,E> UnifiedDataLoader<O,E>
                                 s.to_string_lossy().to_string()
                             });
 
-                            current_filename.write().map(|mut f| {
-                                if skip_files && f.as_ref().and_then(|f| next_filename.as_ref().map(move |n| f == n)).unwrap_or(true) {
-                                    skip_files = false;
+                            if skip_files && next_filename.as_ref().map(|n| {
+                                current_filename == *n
+                            }).unwrap_or(true) {
+                                skip_files = false;
 
-                                    f.as_ref().map(|f| {
-                                        println!("Processing starts from {}th item of file {}", current_items.load(Ordering::Acquire), f);
-                                    });
-                                }
+//                                println!("Processing starts from {}th item of file {}", current_items.load(Ordering::Acquire), f);
+                            }
 
-                                *f = Some(next_filename.unwrap_or(String::from("")));
-                            })?;
+                            current_filename = next_filename.unwrap_or(String::from(""));
 
                             if !path.as_path().extension().map(|e| e == ext.as_str()).unwrap_or(false) {
                                 continue;
@@ -270,9 +263,9 @@ impl<O,E> UnifiedDataLoader<O,E>
                             let mut reader = BufReader::new(File::open(path)?);
 
                             if resume {
-                                reader.seek_relative((sfen_size * current_items.load(Ordering::Acquire)) as i64)?;
+                                reader.seek_relative((sfen_size * current_items) as i64)?;
 
-                                if remaining < sfen_size * current_items.load(Ordering::Acquire) {
+                                if remaining < sfen_size * current_items {
                                     return Err(DataLoadError::InvalidStateError(
                                         String::from(
                                             "The value of the number of trained items in the teacher phase is incorrect."
@@ -280,7 +273,7 @@ impl<O,E> UnifiedDataLoader<O,E>
                                     ));
                                 }
 
-                                remaining -= sfen_size * current_items.load(Ordering::Acquire);
+                                remaining -= sfen_size * current_items;
                             }
 
                             while remaining > 0 {
@@ -298,7 +291,9 @@ impl<O,E> UnifiedDataLoader<O,E>
 
                                 reader.read_exact(&mut buffer)?;
 
-                                current_items.fetch_add(read_size,Ordering::Release);
+                                let mut items = current_items;
+
+                                current_items += read_size;
 
                                 if shuffle {
                                     buffer.shuffle(&mut rng);
@@ -325,7 +320,11 @@ impl<O,E> UnifiedDataLoader<O,E>
                                         }
                                     }
 
-                                    let _ = s.send(processer(batch));
+                                    items += 1;
+
+                                    let _ = s.send(processer(batch).map(|o| {
+                                        o.map(|o| (current_filename.clone(),items,o))
+                                    }));
                                 }
                             }
                         }
@@ -341,22 +340,12 @@ impl<O,E> UnifiedDataLoader<O,E>
 
         Ok(UnifiedDataLoader {
             working:working,
-            receiver:r,
-            current_filename:current_filename,
-            current_items:current_items
+            receiver:r
         })
     }
 
     fn run<F: FnMut() -> Result<(),DataLoadError>>(mut runner:F) -> Result<(),DataLoadError> {
         runner()
-    }
-
-    pub fn current_filename(&self) -> LockResult<RwLockReadGuard<'_, Option<String>>> {
-        self.current_filename.read()
-    }
-
-    pub fn current_items(&self) -> usize {
-        self.current_items.load(Ordering::Acquire)
     }
     fn cmp(a:&Result<DirEntry,std::io::Error>,b:&Result<DirEntry,std::io::Error>) -> core::cmp::Ordering {
         match (a,b) {
@@ -371,10 +360,10 @@ impl<O,E> UnifiedDataLoader<O,E>
         }
     }
 }
-impl<O,E> DataLoader<O,E> for UnifiedDataLoader<O,E>
+impl<O,E> DataLoader<(String,usize,O),E> for UnifiedDataLoader<O,E>
     where O: Send + 'static,
           E: Error + Debug + Display + From<RecvError> + From<DataLoadError> + Send + 'static {
-    fn load(&mut self) -> Result<Option<O>,E> {
+    fn load(&mut self) -> Result<Option<(String,usize,O)>,E> {
         Ok(self.receiver.recv()??)
     }
 }
