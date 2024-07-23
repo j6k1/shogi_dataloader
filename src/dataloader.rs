@@ -236,8 +236,6 @@ impl<O,E> UnifiedDataLoader<O,E>
 
                             let path = path?.path();
 
-                            print!("{}\n", path.display());
-
                             let next_filename = path.as_path().file_name().map(|s| {
                                 s.to_string_lossy().to_string()
                             });
@@ -246,8 +244,6 @@ impl<O,E> UnifiedDataLoader<O,E>
                                 current_filename == *n
                             }).unwrap_or(true) {
                                 skip_files = false;
-
-//                                println!("Processing starts from {}th item of file {}", current_items.load(Ordering::Acquire), f);
                             }
 
                             current_filename = next_filename.unwrap_or(String::from(""));
