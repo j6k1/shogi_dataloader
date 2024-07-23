@@ -138,6 +138,20 @@ impl DataLoaderBuilder {
         }
     }
 
+    pub fn current_items(self,current_items:usize) -> DataLoaderBuilder {
+        DataLoaderBuilder {
+            sfen_size:self.sfen_size,
+            batch_size:self.batch_size,
+            read_sfen_size:self.read_sfen_size,
+            shuffle:self.shuffle,
+            search_dir:self.search_dir,
+            ext:self.ext,
+            current_filename:self.current_filename,
+            current_items:current_items,
+            resume:self.resume
+        }
+    }
+
     pub fn resume(self,resume:bool) -> DataLoaderBuilder {
         DataLoaderBuilder {
             sfen_size:self.sfen_size,
