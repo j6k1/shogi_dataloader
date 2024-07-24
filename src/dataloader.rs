@@ -202,14 +202,13 @@ impl<O,E> UnifiedDataLoader<O,E>
               search_dir:PathBuf,
               start_filename:Option<String>,
               processed_items:usize,
-              resume:bool) -> Result<UnifiedDataLoader<O,E>,DataLoadError>
+              mut resume:bool) -> Result<UnifiedDataLoader<O,E>,DataLoadError>
     where F: FnMut(Vec<Vec<u8>>) -> Result<Option<O>,E> + Send + 'static {
         let (sender,r) = mpsc::channel();
 
         let working = Arc::new(AtomicBool::new(true));
 
         let mut current_filename = start_filename.clone().unwrap_or(String::from(""));
-        let mut current_items = processed_items;
 
         {
             let working = Arc::clone(&working);
@@ -234,6 +233,10 @@ impl<O,E> UnifiedDataLoader<O,E>
                                 break;
                             }
 
+                            let mut current_items = 0;
+
+                            let mut items = 0;
+
                             let path = path?.path();
 
                             let next_filename = path.as_path().file_name().map(|s| {
@@ -242,7 +245,7 @@ impl<O,E> UnifiedDataLoader<O,E>
 
                             if skip_files && next_filename.as_ref().map(|n| {
                                 current_filename == *n
-                            }).unwrap_or(true) {
+                            }).unwrap_or(false) {
                                 skip_files = false;
                             }
 
@@ -259,7 +262,7 @@ impl<O,E> UnifiedDataLoader<O,E>
                             let mut reader = BufReader::new(File::open(path)?);
 
                             if resume {
-                                reader.seek_relative((sfen_size * current_items) as i64)?;
+                                reader.seek_relative((sfen_size * processed_items) as i64)?;
 
                                 if remaining < sfen_size * current_items {
                                     return Err(DataLoadError::InvalidStateError(
@@ -270,6 +273,8 @@ impl<O,E> UnifiedDataLoader<O,E>
                                 }
 
                                 remaining -= sfen_size * current_items;
+                                current_items = processed_items;
+                                resume = false;
                             }
 
                             while remaining > 0 {
@@ -287,15 +292,16 @@ impl<O,E> UnifiedDataLoader<O,E>
 
                                 reader.read_exact(&mut buffer)?;
 
-                                let mut items = current_items;
-
                                 current_items += read_size;
 
+                                let mut buffer = buffer.chunks(sfen_size)
+                                                       .into_iter().map(|p| p.to_vec())
+                                                       .collect::<Vec<Vec<u8>>>();
                                 if shuffle {
                                     buffer.shuffle(&mut rng);
                                 }
 
-                                let mut it = buffer.chunks(sfen_size).into_iter();
+                                let mut it = buffer.into_iter();
 
                                 for _ in 0..((read_size + batch_size - 1) / batch_size) {
                                     if !working.load(Ordering::Acquire) {
