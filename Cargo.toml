@@ -3,6 +3,18 @@ name = "shogi_dataloader"
 version = "0.1.0"
 edition = "2021"
 
+authors = ["jinpu <nanasi18@gmail.com>"]
+description = "Implementation of a data loader for use in training the Shogi AI evaluation."
+documentation = "https://docs.rs/shogi_dataloader"
+homepage = "https://crates.io/crates/shogi_dataloader"
+repository = "https://github.com/j6k1/shogi_dataloader"
+
+readme = "README.md"
+
+keywords = ["shogi","shogiai","dataloader"]
+categories = []
+license = "MIT"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
