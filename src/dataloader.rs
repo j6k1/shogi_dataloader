@@ -147,7 +147,7 @@ impl DataLoaderBuilder {
         }
     }
 
-    pub fn processed_items(self, current_items:usize) -> DataLoaderBuilder {
+    pub fn processed_items(self, processed_items:usize) -> DataLoaderBuilder {
         DataLoaderBuilder {
             sfen_size:self.sfen_size,
             batch_size:self.batch_size,
@@ -156,7 +156,7 @@ impl DataLoaderBuilder {
             search_dir:self.search_dir,
             ext:self.ext,
             start_filename:self.start_filename,
-            processed_items:current_items,
+            processed_items:processed_items,
             resume:self.resume,
             send_buffer_size:self.send_buffer_size
         }
@@ -268,8 +268,6 @@ impl<O,E> UnifiedDataLoader<O,E>
                                 break;
                             }
 
-                            let mut current_items = 0;
-
                             let mut items = 0;
 
                             let path = path?.path();
@@ -299,7 +297,7 @@ impl<O,E> UnifiedDataLoader<O,E>
                             if resume {
                                 reader.seek_relative((sfen_size * processed_items) as i64)?;
 
-                                if remaining < sfen_size * current_items {
+                                if remaining < sfen_size * processed_items {
                                     return Err(DataLoadError::InvalidStateError(
                                         String::from(
                                             "The value of the number of trained items in the teacher phase is incorrect."
@@ -307,8 +305,7 @@ impl<O,E> UnifiedDataLoader<O,E>
                                     ));
                                 }
 
-                                remaining -= sfen_size * current_items;
-                                current_items = processed_items;
+                                remaining -= sfen_size * processed_items;
                                 items += processed_items;
                                 resume = false;
                             }
@@ -327,8 +324,6 @@ impl<O,E> UnifiedDataLoader<O,E>
                                 let mut buffer = vec![0; read_size * sfen_size];
 
                                 reader.read_exact(&mut buffer)?;
-
-                                current_items += read_size;
 
                                 let mut buffer = buffer.chunks(sfen_size)
                                                        .into_iter().map(|p| p.to_vec())
