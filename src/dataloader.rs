@@ -426,6 +426,10 @@ impl<O,E> Drop for UnifiedDataLoader<O,E>
     where O: Send + 'static,
           E: Error + Debug + Display + From<DataLoadError> + Send + 'static {
     fn drop(&mut self) {
+        if self.send_buffer_used_size.load(Ordering::Acquire) == self.send_buffer_size {
+            let _ = self.wakeup_sender.send(());
+        }
+
         self.working.store(false,Ordering::Release);
     }
 }
