@@ -372,7 +372,7 @@ impl<O,E> UnifiedDataLoader<O,E>
 
                                     send_buffer_used_size.fetch_add(1,Ordering::Release);
 
-                                    items += 1;
+                                    items += batch_size;
                                 }
                             }
                         }
