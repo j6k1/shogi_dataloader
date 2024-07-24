@@ -346,6 +346,10 @@ impl<O,E> UnifiedDataLoader<O,E>
 
                                     if send_buffer_size > 0 && send_buffer_used_size.load(Ordering::Acquire) == send_buffer_size {
                                         let _ = wr.recv();
+
+                                        if !working.load(Ordering::Acquire) {
+                                            break 'outer;
+                                        }
                                     }
 
                                     let mut batch = Vec::with_capacity(batch_size);
