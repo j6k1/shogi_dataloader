@@ -323,11 +323,11 @@ impl<O,E> UnifiedDataLoader<O,E>
                                         }
                                     }
 
-                                    items += 1;
-
                                     let _ = s.send(processer(batch).map(|o| {
                                         o.map(|o| (current_filename.clone(),items,o))
                                     }));
+
+                                    items += 1;
                                 }
                             }
                         }
