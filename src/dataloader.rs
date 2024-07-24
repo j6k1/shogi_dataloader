@@ -274,6 +274,7 @@ impl<O,E> UnifiedDataLoader<O,E>
 
                                 remaining -= sfen_size * current_items;
                                 current_items = processed_items;
+                                items += processed_items;
                                 resume = false;
                             }
 
