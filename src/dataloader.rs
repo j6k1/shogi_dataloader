@@ -363,10 +363,6 @@ impl<O,E> UnifiedDataLoader<O,E>
                                        1,Ordering::AcqRel
                                     ) == send_buffer_size - 1 {
                                         let _ = wr.recv();
-
-                                        if !working.load(Ordering::Acquire) {
-                                            break 'outer;
-                                        }
                                     }
                                 }
                             }
