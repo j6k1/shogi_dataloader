@@ -339,14 +339,6 @@ impl<O,E> UnifiedDataLoader<O,E>
                                         break 'outer;
                                     }
 
-                                    if send_buffer_size > 0 && send_buffer_used_size.load(Ordering::Acquire) == send_buffer_size {
-                                        let _ = wr.recv();
-
-                                        if !working.load(Ordering::Acquire) {
-                                            break 'outer;
-                                        }
-                                    }
-
                                     let mut batch = Vec::with_capacity(batch_size);
 
                                     let mut j = 0;
@@ -365,9 +357,17 @@ impl<O,E> UnifiedDataLoader<O,E>
                                         o.map(|o| (current_filename.clone(),items,o))
                                     }));
 
-                                    send_buffer_used_size.fetch_add(1,Ordering::Release);
-
                                     items += batch_size;
+
+                                    if send_buffer_size > 0 && send_buffer_used_size.fetch_add(
+                                       1,Ordering::AcqRel
+                                    ) == send_buffer_size - 1 {
+                                        let _ = wr.recv();
+
+                                        if !working.load(Ordering::Acquire) {
+                                            break 'outer;
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -412,9 +412,9 @@ impl<O,E> DataLoader<(String,usize,O),E> for UnifiedDataLoader<O,E>
     fn load(&mut self) -> Result<Option<(String,usize,O)>,E> {
         let r = self.receiver.recv()?;
 
-        self.send_buffer_used_size.fetch_sub(1,Ordering::Release);
-
-        if self.send_buffer_size > 0 && self.send_buffer_used_size.load(Ordering::Acquire) == self.send_buffer_size - 1 {
+        if self.send_buffer_size > 0 && self.send_buffer_used_size.fetch_sub(
+            1,Ordering::AcqRel
+        ) == self.send_buffer_size {
             let _ = self.wakeup_sender.send(());
         }
 
