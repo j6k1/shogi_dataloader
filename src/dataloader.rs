@@ -295,8 +295,6 @@ impl<O,E> UnifiedDataLoader<O,E>
                             let mut reader = BufReader::new(File::open(path)?);
 
                             if resume {
-                                reader.seek_relative((sfen_size * processed_items) as i64)?;
-
                                 if remaining < sfen_size * processed_items {
                                     return Err(DataLoadError::InvalidStateError(
                                         String::from(
@@ -304,6 +302,8 @@ impl<O,E> UnifiedDataLoader<O,E>
                                         )
                                     ));
                                 }
+
+                                reader.seek_relative((sfen_size * processed_items) as i64)?;
 
                                 remaining -= sfen_size * processed_items;
                                 items += processed_items;
@@ -324,6 +324,8 @@ impl<O,E> UnifiedDataLoader<O,E>
                                 let mut buffer = vec![0; read_size * sfen_size];
 
                                 reader.read_exact(&mut buffer)?;
+
+                                remaining -= read_size * sfen_size;
 
                                 let mut buffer = buffer.chunks(sfen_size)
                                                        .into_iter().map(|p| p.to_vec())
