@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::{error, fmt, io};
 use std::sync::{PoisonError};
-use std::sync::mpsc::RecvError;
+use crossbeam_channel::RecvError;
 
 /// Error during loading of teacher phase data
 #[derive(Debug)]

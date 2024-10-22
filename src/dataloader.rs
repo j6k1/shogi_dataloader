@@ -4,9 +4,9 @@ use std::fmt::{Debug, Display};
 use std::fs::{DirEntry, File};
 use std::io::{BufReader, Read};
 use std::path::{PathBuf};
-use std::sync::{Arc, mpsc};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::mpsc::{Receiver, RecvError, Sender};
+use std::sync::{Arc};
+use std::sync::atomic::{AtomicBool, Ordering};
+use crossbeam_channel::{Receiver, RecvError};
 use rand::prelude::SliceRandom;
 
 use crate::error::DataLoadError;
@@ -215,10 +215,7 @@ pub struct UnifiedDataLoader<O,E>
     where O: Send + 'static,
           E: Error + Debug + Display + From<DataLoadError> + Send + 'static {
     working:Arc<AtomicBool>,
-    send_buffer_size:usize,
-    send_buffer_used_size:Arc<AtomicUsize>,
-    receiver: Receiver<Result<Option<(String,usize,O)>,E>>,
-    wakeup_sender:Sender<()>,
+    receiver: Receiver<Result<Option<(String,usize,O)>,E>>
 }
 impl<O,E> UnifiedDataLoader<O,E>
     where O: Send + 'static,
@@ -235,18 +232,14 @@ impl<O,E> UnifiedDataLoader<O,E>
               mut resume:bool,
               send_buffer_size:usize) -> Result<UnifiedDataLoader<O,E>,DataLoadError>
     where F: FnMut(Vec<Vec<u8>>) -> Result<Option<O>,E> + Send + 'static {
-        let (sender,r) = mpsc::channel();
-        let (wakeup_sender,wr) = mpsc::channel();
+        let (sender,r) = crossbeam_channel::bounded(send_buffer_size);
 
         let working = Arc::new(AtomicBool::new(true));
 
         let mut current_filename = start_filename.clone().unwrap_or(String::from(""));
 
-        let send_buffer_used_size = Arc::new(AtomicUsize::new(0));
-
         {
             let working = Arc::clone(&working);
-            let send_buffer_used_size = Arc::clone(&send_buffer_used_size);
 
             let s = sender.clone();
 
@@ -360,12 +353,6 @@ impl<O,E> UnifiedDataLoader<O,E>
                                     }));
 
                                     items += batch_size;
-
-                                    if send_buffer_size > 0 && send_buffer_used_size.fetch_add(
-                                       1,Ordering::AcqRel
-                                    ) == send_buffer_size - 1 {
-                                        let _ = wr.recv();
-                                    }
                                 }
                             }
                         }
@@ -381,10 +368,7 @@ impl<O,E> UnifiedDataLoader<O,E>
 
         Ok(UnifiedDataLoader {
             working:working,
-            send_buffer_size:send_buffer_size,
-            send_buffer_used_size:send_buffer_used_size,
-            receiver:r,
-            wakeup_sender:wakeup_sender,
+            receiver:r
         })
     }
 
@@ -408,25 +392,13 @@ impl<O,E> DataLoader<(String,usize,O),E> for UnifiedDataLoader<O,E>
     where O: Send + 'static,
           E: Error + Debug + Display + From<RecvError> + From<DataLoadError> + Send + 'static {
     fn load(&mut self) -> Result<Option<(String,usize,O)>,E> {
-        let r = self.receiver.recv()?;
-
-        if self.send_buffer_size > 0 && self.send_buffer_used_size.fetch_sub(
-            1,Ordering::AcqRel
-        ) == self.send_buffer_size {
-            let _ = self.wakeup_sender.send(());
-        }
-
-        Ok(r?)
+        Ok(self.receiver.recv()??)
     }
 }
 impl<O,E> Drop for UnifiedDataLoader<O,E>
     where O: Send + 'static,
           E: Error + Debug + Display + From<DataLoadError> + Send + 'static {
     fn drop(&mut self) {
-        if self.send_buffer_used_size.load(Ordering::Acquire) == self.send_buffer_size {
-            let _ = self.wakeup_sender.send(());
-        }
-
         self.working.store(false,Ordering::Release);
     }
 }
