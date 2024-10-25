@@ -348,11 +348,11 @@ impl<O,E> UnifiedDataLoader<O,E>
                                         }
                                     }
 
+                                    items += j;
+
                                     let _ = s.send(processer(batch).map(|o| {
                                         o.map(|o| (current_filename.clone(),items,o))
                                     }));
-
-                                    items += batch_size;
                                 }
                             }
                         }
