@@ -2,12 +2,14 @@ use std::{fs};
 use std::error::Error;
 use std::fmt::{Debug, Display};
 use std::fs::{DirEntry, File};
-use std::io::{BufReader, Read};
+use std::io::{Read, SeekFrom};
+use std::io::Seek;
 use std::path::{PathBuf};
 use std::sync::{Arc};
 use std::sync::atomic::{AtomicBool, Ordering};
 use crossbeam_channel::{Receiver, RecvError};
 use rand::prelude::SliceRandom;
+use rayon::prelude::{ParallelIterator, IndexedParallelIterator, IntoParallelIterator};
 
 use crate::error::DataLoadError;
 
@@ -256,12 +258,16 @@ impl<O,E> UnifiedDataLoader<O,E>
                             .collect::<Vec<Result<DirEntry,_>>>();
                         paths.sort_by(Self::cmp);
 
+                        let mut batch = Vec::with_capacity(batch_size);
+
+                        let mut items= 0;
+
                         'outer: for path in paths {
                             if !working.load(Ordering::Acquire) {
                                 break;
                             }
 
-                            let mut items = 0;
+                            items = 0;
 
                             let path = path?.path();
 
@@ -285,7 +291,7 @@ impl<O,E> UnifiedDataLoader<O,E>
 
                             let mut remaining = metadata.len() as usize;
 
-                            let mut reader = BufReader::new(File::open(path)?);
+                            let mut reader = File::open(path)?;
 
                             if resume {
                                 if remaining < sfen_size * processed_items {
@@ -296,7 +302,7 @@ impl<O,E> UnifiedDataLoader<O,E>
                                     ));
                                 }
 
-                                reader.seek_relative((sfen_size * processed_items) as i64)?;
+                                reader.seek(SeekFrom::Start((sfen_size * processed_items) as u64))?;
 
                                 remaining -= sfen_size * processed_items;
                                 items += processed_items;
@@ -320,8 +326,9 @@ impl<O,E> UnifiedDataLoader<O,E>
 
                                 remaining -= read_size * sfen_size;
 
-                                let mut buffer = buffer.chunks(sfen_size)
-                                                       .into_iter().map(|p| p.to_vec())
+                                let mut buffer = buffer.into_par_iter()
+                                                       .chunks(sfen_size)
+                                                       .map(|p| p.to_vec())
                                                        .collect::<Vec<Vec<u8>>>();
                                 if shuffle {
                                     buffer.shuffle(&mut rng);
@@ -329,32 +336,41 @@ impl<O,E> UnifiedDataLoader<O,E>
 
                                 let mut it = buffer.into_iter();
 
-                                for _ in 0..((read_size + batch_size - 1) / batch_size) {
+                                let mut count = 0;
+
+                                while let Some(item) = it.next() {
                                     if !working.load(Ordering::Acquire) {
                                         break 'outer;
                                     }
 
-                                    let mut batch = Vec::with_capacity(batch_size);
+                                    batch.push(item);
 
-                                    let mut j = 0;
+                                    count += 1;
 
-                                    while let Some(p) = it.next() {
-                                        j += 1;
+                                    let size = batch.len();
 
-                                        batch.push(p.to_vec());
+                                    if size == batch_size {
+                                        items += count;
+                                        count = 0;
 
-                                        if j == batch_size {
-                                            break;
-                                        }
+                                        let _ = s.send(processer(batch).map(|o| {
+                                            o.map(|o| (current_filename.clone(),items,o))
+                                        }));
+
+                                        batch = Vec::with_capacity(batch_size);
                                     }
-
-                                    items += j;
-
-                                    let _ = s.send(processer(batch).map(|o| {
-                                        o.map(|o| (current_filename.clone(),items,o))
-                                    }));
                                 }
                             }
+                        }
+
+                        let size = batch.len();
+
+                        if size > 0 {
+                            items += size;
+
+                            let _ = s.send(processer(batch).map(|o| {
+                                o.map(|o| (current_filename.clone(),items,o))
+                            }));
                         }
 
                         let _ = s.send(Ok(None));
